@@ -218,16 +218,17 @@ int getBatteryPercent(float voltage)
   return (int)((voltage - volt_min) * 100.0 / (volt_max - volt_min));
 }
 
-float calibration = -0.05;
-
 //================== CheckVoltage ================
 void checkVoltage()
 {
-  // Divisor 10K/10K: Vpin = Vbat/2 → Vbat = Vpin * 2
-  float voltage = (analogReadMilliVolts(BATTERY_PIN) / 1000.0) * 2.0 + calibration;
-  printf("Bateria: %.2f V\n", voltage);
+  float raw_mv = analogReadMilliVolts(BATTERY_PIN);
+  float voltage = (raw_mv * 5.0) / 1000.0;
+
+  //printf("Pin: %.2f V\n", raw_mv);
+  //printf("Bateria: %.2f V\n", voltage);
+  
   int percent = getBatteryPercent(voltage);
-  if (abs(percent - lastBattery) > 1)
+  if (abs(percent - lastBattery) > 5)
   {
     addEvent("battery", percent);
     lastBattery = percent;
@@ -324,8 +325,7 @@ void startmsg()
   Serial.println();
 }
 
-void checkFlow()
-{
+void checkFlow(){
   noInterrupts();
   unsigned long pulses = pulseCount;
   pulseCount = 0;
@@ -341,14 +341,6 @@ void checkFlow()
   {
     addEvent("flow", 1);
     accumulatedPulses -= PULSES_PER_LITER;
-  }
-}
-void blinkLed(time_t interval)
-{
-  if (millis() - lastBlink > interval)
-  {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    lastBlink = millis();
   }
 }
 
@@ -381,7 +373,6 @@ void setup()
 void loop()
 {
   checkFlow();
-  blinkLed(200);
   if (millis() - lastHeartbeat > heartbeatInterval)
   {
     connectWifi();
@@ -392,13 +383,11 @@ void loop()
       checkWifi();
       sendHeartbeat();
       sendEvents();
-      blinkLed(1000);
       delay(3000);
     }
     else
     {
       Serial.println("Sem WiFi, não enviou");
-      blinkLed(500);
       delay(3000);
     }
     disconnectWifi();
