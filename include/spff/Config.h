@@ -9,7 +9,13 @@ namespace spff
 namespace config
 {
 
-constexpr const char *kFirmwareVersion = "1.2";
+// A versão pode ser sobrescrita no build para ensaiar o OTA:
+//   -DSPFF_FIRMWARE_VERSION='"1.3"'
+#ifndef SPFF_FIRMWARE_VERSION
+#define SPFF_FIRMWARE_VERSION "1.3"
+#endif
+
+constexpr const char *kFirmwareVersion = SPFF_FIRMWARE_VERSION;
 constexpr const char *kDeviceType = "SP-FF";
 constexpr const char *kPortalSsid = "SmartPlant SP-FF";
 
@@ -81,6 +87,20 @@ constexpr uint32_t kHttpReadTimeoutMs = 15000;
 #define DEVICE_API_KEY ""
 #endif
 constexpr const char *kDeviceApiKey = DEVICE_API_KEY;
+
+// ================= OTA =================
+// A atualização é aplicada na partição inativa e só com bateria suficiente:
+// uma queda no meio do download não afeta o firmware em execução.
+constexpr int kMinBatteryPercentForUpdate = 20;
+constexpr uint32_t kOtaConnectTimeoutMs = 15000;
+constexpr uint32_t kOtaReadTimeoutMs = 30000;
+
+// Somente bancada: força a atualização a partir deste URL no próximo ciclo,
+// ignorando o que o servidor informa. Vazio = comportamento normal.
+#ifndef SPFF_OTA_FORCE_URL
+#define SPFF_OTA_FORCE_URL ""
+#endif
+constexpr const char *kForcedUpdateUrl = SPFF_OTA_FORCE_URL;
 
 } // namespace config
 } // namespace spff

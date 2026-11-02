@@ -7,11 +7,13 @@
 #include "spff/hw/BatteryGauge.h"
 #include "spff/hw/FlowSensor.h"
 #include "spff/hw/PersistentStorage.h"
-#include "spff/hw/SignalMonitor.h"
+#include "spff/core/SignalMonitor.h"
 #include "spff/net/ApiClient.h"
+#include "spff/net/HttpOtaUpdater.h"
 #include "spff/net/SecureHttpTransport.h"
 #include "spff/net/SystemClock.h"
 #include "spff/net/WifiLink.h"
+#include "spff/power/RuntimeController.h"
 
 namespace
 {
@@ -28,9 +30,12 @@ FlowSensor g_flow(config::kFlowPin, config::kPulsesPerLiter);
 BatteryGauge g_battery(config::kBatteryPin, config::kBatteryDivider, config::kBatterySamples);
 SignalMonitor g_signal(config::kRssiReportDeltaDbm);
 SettingsStore g_settings(config::kHeartbeatLimits, "spff");
+HttpOtaUpdater g_updater;
+RuntimeController g_power;
 
 Device g_device(Device::Dependencies{g_clock, g_network, g_api, g_queue,
-                                     g_flow, g_battery, g_signal, g_settings});
+                                     g_flow, g_battery, g_signal, g_settings,
+                                     g_updater, g_power});
 
 } // namespace
 

@@ -12,6 +12,10 @@ public:
 
   static bool isValid(int rssi) { return rssi <= 0 && rssi >= -100; }
 
+  // Semeia o último valor conhecido (persistido em RTC) para que a histerese
+  // continue valendo depois de um auto-restart.
+  void seed(int rssi);
+
   bool shouldReport(int rssi);
 
 private:

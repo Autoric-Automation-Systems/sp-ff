@@ -7,6 +7,7 @@
 #include "spff/Config.h"
 #include "spff/Logger.h"
 #include "spff/core/Event.h"
+#include "spff/core/FirmwareVersion.h"
 #include "spff/hw/PersistentStorage.h"
 
 namespace spff
@@ -52,7 +53,7 @@ Event makeEvent(const char *name, float value, uint32_t ts)
 {
   Event event{};
   setEventName(event, name);
-  event.value = value;
+  event.value = roundEventValue(value);
   event.ts = ts;
   return event;
 }
@@ -72,14 +73,16 @@ void Device::begin()
   log::begin(115200);
 
   log::blank();
-  log::info("Boot Smart Plant %s | %s | boot #%lu | reset: %s",
+  log::info("Boot Smart Plant %s | %s | boot #%lu | reset: %s | slot: %s",
             config::kFirmwareVersion, config::kDeviceType,
-            static_cast<unsigned long>(bootCount_), resetReasonName(esp_reset_reason()));
+            static_cast<unsigned long>(bootCount_), resetReasonName(esp_reset_reason()),
+            dependencies_.power.firmwareSlot());
 
   // NVS só é acessada depois do boot do Arduino (nunca em construtor global).
   timer_.setPeriod(sanitizeInterval(dependencies_.settings.heartbeatInterval(), config::kHeartbeatLimits));
 
   mac_ = dependencies_.network.macAddress();
+  dependencies_.signal.seed(lastReportedRssi());
   log::info("MAC: %s | intervalo: %lu ms | fila: %u evento(s)",
             mac_, static_cast<unsigned long>(timer_.period()),
             static_cast<unsigned>(dependencies_.queue.size()));
@@ -112,14 +115,13 @@ void Device::tick()
   {
     log::info("%u ciclos seguidos sem envio, reiniciando...",
               static_cast<unsigned>(health_.sendFailures()));
-    Serial.flush();
-    ESP.restart();
+    dependencies_.power.restart();
   }
 }
 
 void Device::runNetworkCycle()
 {
-  publishBatteryEvent();
+  const int batteryPercent = publishBatteryEvent();
 
   const bool connected = dependencies_.network.connect(config::kWifiConnectRetries);
   health_.recordWifi(connected);
@@ -131,19 +133,14 @@ void Device::runNetworkCycle()
     publishSignalEvent();
     publishQueuedEvents();
 
-    HeartbeatStatus status{};
-    status.mac = mac_;
-    status.deviceType = config::kDeviceType;
-    status.version = config::kFirmwareVersion;
-    status.rssi = dependencies_.network.rssi();
-    status.ip = dependencies_.network.localIp();
-    status.uptimeMs = millis();
-    status.boots = bootCount_;
-    status.freeHeap = ESP.getFreeHeap();
-
-    uint32_t intervalHint = 0;
-    heartbeatOk = dependencies_.api.sendHeartbeat(status, intervalHint);
-    applyIntervalHint(intervalHint);
+    HeartbeatReply reply{};
+    heartbeatOk = sendHeartbeat(reply);
+    if (heartbeatOk && applyFirmwareUpdate(reply, batteryPercent))
+    {
+      // A imagem já está validada na partição inativa: o reboot a ativa.
+      dependencies_.power.restart();
+      return;
+    }
 
     dependencies_.network.disconnect();
   }
@@ -169,7 +166,7 @@ void Device::publishFlowEvents()
   }
 }
 
-void Device::publishBatteryEvent()
+int Device::publishBatteryEvent()
 {
   const BatteryReading reading = dependencies_.battery.read();
   log::info("Bateria: %.2f V (%d%%)", reading.volts, reading.percent);
@@ -180,6 +177,7 @@ void Device::publishBatteryEvent()
         makeEvent(kBatteryEvent, static_cast<float>(reading.percent), dependencies_.clock.epochNow()));
     lastBatteryPercent_ = reading.percent;
   }
+  return reading.percent;
 }
 
 void Device::publishSignalEvent()
@@ -192,6 +190,7 @@ void Device::publishSignalEvent()
   }
   if (dependencies_.signal.shouldReport(rssi))
   {
+    saveLastReportedRssi(rssi);
     dependencies_.queue.push(makeEvent(kWifiEvent, static_cast<float>(rssi), dependencies_.clock.epochNow()));
   }
 }
@@ -223,6 +222,59 @@ void Device::publishQueuedEvents()
     log::info("Envio incompleto: %u evento(s) mantidos na fila",
               static_cast<unsigned>(dependencies_.queue.size()));
   }
+}
+
+bool Device::sendHeartbeat(HeartbeatReply &reply)
+{
+  HeartbeatStatus status{};
+  status.mac = mac_;
+  status.deviceType = config::kDeviceType;
+  status.version = config::kFirmwareVersion;
+  status.rssi = dependencies_.network.rssi();
+  status.ip = dependencies_.network.localIp();
+  status.uptimeMs = millis();
+  status.boots = bootCount_;
+  status.freeHeap = ESP.getFreeHeap();
+
+  const bool ok = dependencies_.api.sendHeartbeat(status, reply);
+  applyIntervalHint(reply.intervalMs);
+  return ok;
+}
+
+bool Device::applyFirmwareUpdate(const HeartbeatReply &reply, int batteryPercent)
+{
+  const char *url = reply.firmwareUrl;
+  bool skipVersionCheck = false;
+
+  // Atalho de bancada: força o download sem depender da resposta do servidor.
+  if (config::kForcedUpdateUrl[0] != '\0')
+  {
+    url = config::kForcedUpdateUrl;
+    skipVersionCheck = true;
+  }
+
+  if (url == nullptr || url[0] == '\0')
+  {
+    return false;
+  }
+
+  if (batteryPercent >= 0 && batteryPercent < config::kMinBatteryPercentForUpdate)
+  {
+    log::info("OTA adiado: bateria em %d%% (mínimo %d%%)", batteryPercent,
+              config::kMinBatteryPercentForUpdate);
+    return false;
+  }
+
+  if (!skipVersionCheck && !isNewerVersion(reply.firmwareVersion, config::kFirmwareVersion))
+  {
+    log::info("OTA: versão %s não é mais nova que %s", reply.firmwareVersion,
+              config::kFirmwareVersion);
+    return false;
+  }
+
+  log::info("OTA: %s -> %s", config::kFirmwareVersion,
+            skipVersionCheck ? "forçada (bancada)" : reply.firmwareVersion);
+  return dependencies_.updater.install(url);
 }
 
 void Device::applyIntervalHint(uint32_t newIntervalMs)

@@ -8,16 +8,18 @@
 #include "spff/core/IntervalTimer.h"
 #include "spff/hw/BatteryGauge.h"
 #include "spff/hw/FlowSensor.h"
-#include "spff/hw/SignalMonitor.h"
+#include "spff/core/SignalMonitor.h"
 #include "spff/net/ApiClient.h"
 #include "spff/net/IClock.h"
+#include "spff/net/IFirmwareUpdater.h"
 #include "spff/net/INetworkLink.h"
+#include "spff/power/IPowerController.h"
 
 namespace spff
 {
 
 // Orquestra o ciclo de vida do dispositivo. Conhece apenas abstrações
-// (IClock, INetworkLink, ApiClient) — nunca WiFi, HTTP ou ADC.
+// (IClock, INetworkLink, ApiClient, IFirmwareUpdater) — nunca WiFi, HTTP ou ADC.
 class Device
 {
 public:
@@ -31,6 +33,8 @@ public:
     BatteryGauge &battery;
     SignalMonitor &signal;
     SettingsStore &settings;
+    IFirmwareUpdater &updater;
+    IPowerController &power;
   };
 
   explicit Device(const Dependencies &dependencies);
@@ -40,10 +44,12 @@ public:
 
 private:
   void publishFlowEvents();
-  void publishBatteryEvent();
+  int publishBatteryEvent();
   void publishSignalEvent();
   void publishQueuedEvents();
   void runNetworkCycle();
+  bool sendHeartbeat(HeartbeatReply &reply);
+  bool applyFirmwareUpdate(const HeartbeatReply &reply, int batteryPercent);
   void applyIntervalHint(uint32_t newIntervalMs);
   void reportStatus();
 

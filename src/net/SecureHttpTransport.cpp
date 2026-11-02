@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <cstring>
 
@@ -32,11 +33,20 @@ int SecureHttpTransport::post(const char *url, const char *body, char *response,
     response[0] = '\0';
   }
 
-  WiFiClientSecure client;
-  configureTls(client);
+  // HTTP puro (servidor local de desenvolvimento) não pode usar TLS: o
+  // WiFiClientSecure sempre faz handshake e a conexão seria recusada.
+  const bool isHttps = strncmp(url, "https", 5) == 0;
+  WiFiClient plainClient;
+  WiFiClientSecure secureClient;
+  NetworkClient *client = &plainClient;
+  if (isHttps)
+  {
+    configureTls(secureClient);
+    client = &secureClient;
+  }
 
   HTTPClient http;
-  if (!http.begin(client, url))
+  if (!http.begin(*client, url))
   {
     log::info("Falha ao iniciar HTTP: %s", url);
     return -1;

@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "spff/Logger.h"
 
@@ -30,6 +31,18 @@ uint32_t readIntervalHint(const JsonVariant &value)
   return static_cast<uint32_t>(value.as<double>());
 }
 
+// Copia texto do JSON para um buffer fixo, tolerando campo ausente ou de outro tipo.
+void copyText(const JsonVariant &value, char *destination, size_t size)
+{
+  destination[0] = '\0';
+  if (size < 2 || !value.is<const char *>())
+  {
+    return;
+  }
+  strncpy(destination, value.as<const char *>(), size - 1);
+  destination[size - 1] = '\0';
+}
+
 } // namespace
 
 ApiClient::ApiClient(ITransport &transport, const char *baseUrl) : transport_(transport)
@@ -54,9 +67,11 @@ bool ApiClient::postJson(const char *url, const char *body)
   return true;
 }
 
-bool ApiClient::sendHeartbeat(const HeartbeatStatus &status, uint32_t &newIntervalMs)
+bool ApiClient::sendHeartbeat(const HeartbeatStatus &status, HeartbeatReply &reply)
 {
-  newIntervalMs = 0;
+  reply.intervalMs = 0;
+  reply.firmwareVersion[0] = '\0';
+  reply.firmwareUrl[0] = '\0';
 
   StaticJsonDocument<384> document;
   document["mac"] = status.mac;
@@ -75,14 +90,16 @@ bool ApiClient::sendHeartbeat(const HeartbeatStatus &status, uint32_t &newInterv
     return false;
   }
 
-  StaticJsonDocument<256> reply;
-  if (deserializeJson(reply, response_) != DeserializationError::Ok)
+  StaticJsonDocument<256> response;
+  if (deserializeJson(response, response_) != DeserializationError::Ok)
   {
     log::info("Resposta de heartbeat sem JSON válido");
     return true;
   }
 
-  newIntervalMs = readIntervalHint(reply["heartbeatInterval"]);
+  reply.intervalMs = readIntervalHint(response["heartbeatInterval"]);
+  copyText(response["firmwareVersion"], reply.firmwareVersion, sizeof(reply.firmwareVersion));
+  copyText(response["firmwareUrl"], reply.firmwareUrl, sizeof(reply.firmwareUrl));
   return true;
 }
 
@@ -101,15 +118,21 @@ size_t ApiClient::sendEvents(const char *mac, const Event *events, size_t count,
     const size_t capacity = JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(batch) +
                             batch * JSON_OBJECT_SIZE(3) + 64;
 
+    // Os valores precisam ir com 2 casas: serializar o float direto gera
+    // 29.63999939. O texto formatado vive até o serializeJson abaixo.
+    char valueText[kMaxEventsPerBatch][16];
+
     DynamicJsonDocument document(capacity);
     document["mac"] = mac;
     JsonArray payload = document.createNestedArray("events");
     for (size_t i = 0; i < batch; i++)
     {
       const Event &event = events[delivered + i];
+      formatEventValue(event.value, valueText[i], sizeof(valueText[i]));
+
       JsonObject item = payload.createNestedObject();
       item["name"] = event.name;
-      item["value"] = event.value;
+      item["value"] = serialized(valueText[i]);
       item["ts"] = event.ts != 0 ? event.ts : nowEpoch;
     }
 

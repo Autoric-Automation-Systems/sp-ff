@@ -18,6 +18,7 @@ struct QueueStorage
   Event slots[kCapacity];
   uint16_t count;
   uint32_t magic;
+  uint32_t checksum;
 };
 
 // Fila FIFO de capacidade fixa, sem alocação dinâmica.
@@ -26,7 +27,9 @@ class EventQueue
 public:
   explicit EventQueue(QueueStorage &storage);
 
-  // Valida o magic do bloco persistido (RTC indefinido após queda de energia).
+  // Valida magic, contagem, checksum e os nomes: memória RTC pode vir
+  // indefinida (primeira energização) ou de outro firmware, e nada disso é
+  // confiável sem checksum — bloco inconsistente é descartado.
   void restore();
 
   size_t size() const { return storage_.count; }
@@ -44,6 +47,10 @@ public:
   static constexpr size_t capacity() { return QueueStorage::kCapacity; }
 
 private:
+  bool isConsistent() const;
+  uint32_t computeChecksum() const;
+  void updateChecksum();
+
   QueueStorage &storage_;
   uint32_t dropped_ = 0;
 };
