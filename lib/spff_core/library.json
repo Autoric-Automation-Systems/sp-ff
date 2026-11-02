@@ -1,0 +1,6 @@
+{
+  "name": "spff_core",
+  "version": "1.2.0",
+  "description": "Dominio portavel do SP-FF (sem dependencia de Arduino)",
+  "build": { "srcDir": "src" }
+}
